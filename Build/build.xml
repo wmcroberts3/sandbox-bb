@@ -1,0 +1,965 @@
+<?xml version="1.0" ?>
+
+<project name="Sandbox" default="Help" basedir=".." >
+    
+    <description>
+	A build script focused on producing various build outputs for the 
+    sandbox app.
+	</description>
+
+    <!-- 
+    ===========================================================================
+    Public Target Definitions:
+    A 'Debug' build uses the DebugLibrary as opposed to the 'Releae' build 
+    which uses the ProductionLibrary. The 'Debug' build only runs on 
+    simulators. The 'Release' build only runs on devices and is the build type
+    used for creating a distribution for clients. The RELEASE parameter controls
+    this behaviour.
+    
+    A 'Full' build produces a full set of artifacts and ends with a
+    distribution-ready set of artifacts. A 'Dev' build produces just a 
+    minimum set of artifacts for development purposes. The FULL parameter
+    controls this behaviour.
+    
+    Public Target    Description
+    =============    ===========
+    Build            Produces a set of build artifacts based on the parameters
+                     passed into this build script.
+    Clean            Cleans all existing build artificats.
+    Help (default)   Displays the help screen for this build script. 
+    
+    Parameter Definitions:
+    Parameters may be set on the command line with -Dxxx=yyy; or within Eclipse
+    with launch definitions.
+    
+    External    Corresponding
+    Parameter   Internal Parameter   Description
+    =========   ===================  ===========
+    JDEBIN      not implemented      Designates the location of the parent Research
+                                     in Motion directory
+    FULL        paramFull            Designates if the build type is 'Full' or 'Dev'.
+                                     Format: true | false
+    JDE         paramJDE             Designates the JDE version to use for building.
+                                     Format: n.n.n
+    PIN         PIN (optional)       Designates the PIN of the connected device for 
+                                     erasing, deploying and debugging.
+                                     Format: 0123ABCD (8 hex digits)
+    RELEASE     paramRelease         Designates if the build is for 'Release' or 
+                                     'Debug'.
+                                     Format: true | false
+    SIM         paramSim             Designates jde simulator set to deploy
+                                     the build to.
+                                     Format: n.n.n
+    SIGNED      paramSigned          Designates if you would like to sign the 
+                                     build.
+                                     Format: true | false
+    SIGNED_PASS paramSignedPass      If signing the build, this parameter is
+                                     mandatory and represents the password to
+                                     use.
+                                     Format: string
+    TEST        paramTest            Designates if the build will run unit tests after
+                                     building the binaries.
+                                     Format: true | false
+    UNZIP       paramUnzip           Designates if the build should be unzipped
+                                     at the finish of the build (required for
+                                     some BIS distributions).
+                                     Format: true | false
+    ===========================================================================
+    -->
+    
+	<!-- 
+    ===========================================================================
+    This section holds the implementation of our local override capability.
+    This allows developers to tailor the build to their local system as they
+    see fit. The local override file is located in the folder 'local' off of the
+    root of this workspace and is nameed 'local.xml'. Optionally, create this file 
+    if you want to override anything from a property to a complete replacement of this
+    standard build script. This standard build script will expect the following 
+    structure for local.xml:
+    
+    <project name="MobileAgentOverride" default="localOverrideTarget" basedir="." >
+        
+       Optional:
+       Set global properties here to override properties in the standard
+       build script. 
+       Example override of a property:
+	   <property name="rim.dir" location="/Betas/Research in Motion"/>
+	   
+	   Mandatory:
+	   Place an override target here called localOverrideTarget. The contents
+	   of the target can be anything from nothing at all to a full replacement
+	   of the standard build script
+	   Example of localOverrideTarget:
+	   <target name="localOverrideTarget">
+	       <exec executable="cmd">
+	           <arg value="/c"/>
+	           <arg value="myBuildScriptOverride.bat"/>
+           </exec>
+           <fail message="Using myBuildScriptOverride.bat for local builds."/>
+	   </target>
+    
+    </project> 
+	
+	===========================================================================
+	-->
+	
+    <!-- First we attempt to import a defined local override file. Note the
+         use of 'optional' here so that we fail quietly if we are doing no
+         overrides. Note the difference in locating the file here as opposed
+         to locating every other file in the build script. The locating is 
+         done via the location of build.xml not our basedir=".." setting
+         via the project element above. -->
+	<import file="../local/local.xml" optional="true" />
+	
+	<!-- Our standard Build target calls this via its depends list. It comes
+	     first in the depends list so we can override anything including
+	     parameter setup -->
+    <target name="setLocalOverrides">
+
+    	<!-- start our log file -->
+    	<property name="logFile" location="Build\build.log"/>
+    	<record name="${logFile}" loglevel="verbose"/>
+
+	    <!-- do we have a standard local override file in place? -->
+        <available property="localAvailable" 
+	                   file="local\local.xml"
+	                   type="file"/>
+	        
+	    <!-- now with the property 'localAvailable' as our conditional switch 
+	         in place, conditionally call our local override target --> 
+	    <antcall target="callLocalOverrideTarget"/>
+	
+    </target>
+	
+	<!-- This supporting target will be conditionally implemented if 
+	     a local override file is in place -->
+	<target name="callLocalOverrideTarget" if="localAvailable" >
+		
+		<!-- We are good to go to call our local override target defined
+		     in the import of our local\local.xml -->
+		<antcall target="localOverrideTarget" />
+		
+	</target>
+	
+    <!-- 
+	===========================================================================
+	Line up all of our public targets here, except for Help which we place at
+	the bottom of this build script due to its length. 
+	===========================================================================
+	-->
+	<target name="Build"
+    	depends="setLocalOverrides,
+		         setParamFull,
+		         setParamJDE,
+	             setParamRelease,
+		         setParamSigned,
+		         setParamSim,
+	             setParamTest,
+		         setParamUnzip" 
+    	description="Produces a set of build artifacts based on the parameters
+		             passed into this build script." >
+    
+		<!-- first, allow for local overrides of any parts of this build script
+		     via the setLocalOverrides in the depends above. Note, this can be
+		     no action taken to simplistic variable overrides to a complete
+		     replacement of this build script -->
+
+	    <!-- second, check our parameters sent in, via the remaining depends above,
+             we need to do via 'depends' as antcall would not allow for properties
+             set in the targets to be visible here when the antcall is done -->
+        
+		<!-- Finally, let's extract out the version number we are building for to 
+		     be used if calling from a stand alone development run.
+		     Important notes: 
+		     1. While not explicitely shown here, after this call
+		        the version number will be in the property  loader.application.version. 
+		     2. We assign this loader.application.version to our MasterBuild defined
+		        proverty VERSION.
+		     3. Hence, if called from MasterBuild run, we inherit that version. If called
+		        from in a standalone development run, we get the value
+		        from MobileAgent.alx. -->
+		<xmlproperty file="sandbox/sandbox.alx" />
+		<property name="VERSION" value="${loader.application.version}" />
+		
+	    <!-- We need to be careful in setting up our standard staging and distribution
+	         directories.
+	         1. If called from a MasterBuild run, we inherit those versions.
+	         2. If called from a standalone development run, we use the versions
+	            defined here.
+	         3. Note the use of the tstamp task to get a date value to use that
+	            mimics what is used in the MasterBuild runs but we take out the
+	            hours and minutes so we have just a daily folder.
+	    -->
+	    <tstamp>
+	        <format property="DATE" pattern="yyyyMMdd" locale="en,US"/>
+	    </tstamp>
+		<!-- Taking this out for now as we incorporate into MSBuild -->
+		<!--
+		<property name="stdStagingDir"      location="/BuildResults/${DATE}/BlackBerryMobileAgent/${VERSION}/staging/"/>
+        <property name="stdDistributionDir" location="/BuildResults/${DATE}/BlackBerryMobileAgent/${VERSION}/distribution"/>
+        -->
+		
+        <!-- ok, now we are ready to set our development local Build variables -->
+		<property name="libDir"             location="sandbox/lib"/>
+        <property name="binDir"             location="Build/bin/${loader.application.version}"/>
+		<property name="docsDir"            location="Build/docs/${loader.application.version}"/>
+        <property name="devStagingDir"      location="Build/staging/${loader.application.version}"/>
+		<property name="devDistributionDir" location="Build/distribution/${loader.application.version}"/>
+		                
+	    <!-- next we set our jde specific build variables -->
+		<!-- 4.2.1 note, we conditionly set the signature tool to 4.3.0 as the 4.2.1
+		     version cannot be automated -->
+	    <property name="jdeRootDir"       location="${JDEBIN}"/>
+	    <property name="jdeLib"           location="${jdeRootDir}${paramJDE}/lib/net_rim_api.jar" />
+        <property name="jdeRAPC"          location="${jdeRootDir}${paramJDE}/bin/rapc.exe" />
+        <condition property="jdeSignatureTool"
+                      value="${jdeRootDir}4.3.0/bin/SignatureTool.jar"
+        	           else="${jdeRootDir}${paramJDE}/bin/SignatureTool.jar" >
+            <equals arg1="${JDE}" arg2="4.2.1"/>
+        </condition>
+		<property name="jdeJavaLoader"    location="${jdeRootDir}${paramJDE}/bin/JavaLoader.exe" />
+        <property name="jdeSimulatorsDir" location="${jdeRootDir}${paramSim}/simulator" />
+		
+		<!-- if we got here, our local overrides are in place and our parameters dependent 
+             properties are set and we are good to go for the jde specific parts of our build -->
+		
+		<!-- first clean out all previous artifacts -->
+		<antcall target="Clean" />
+		
+		<!-- create the one output directory we'll need up front, all others
+		    are created as needed -->
+        <mkdir dir="${binDir}" />
+
+        <!-- build our SmsTest application -->
+        <antcall target="sandbox" />
+	    
+        <!-- sign the code if requested -->
+        <condition property="signed">
+            <equals arg1="${paramSigned}"
+                    arg2="true" />
+        </condition>
+        <antcall target="signBuild"/>
+    
+        <!-- unzip the build if requested -->
+		<!-- Important Note: The update of the jad file does not account
+		                     for this yet (updateJadFile). -->
+        <condition property="unzip">
+            <equals arg1="${paramUnzip}"
+                    arg2="true" />
+        </condition>
+        <antcall target="unzipBuild"/>
+        
+        <!-- Deploy the resulting build to the designated simulator
+             specified by param SIM -->
+	    <antcall target="deployBuildToSim"/>
+
+	    <!-- create a distribution set of artifacts if we specified FULL equals true -->
+        <condition property="distribution">
+            <equals arg1="${paramFull}"
+                    arg2="true" />
+        </condition>
+		<antcall target="deployBuildToDistribution"/>
+		
+	</target>
+
+    <target name="Clean" description="Cleans all existing build artificats.">
+        
+    	<!-- simplistic clean-out of any artifacts that could have been
+    	     created previously -->
+    	<delete dir="${binDir}"             />
+        <delete dir="${docsDir}"            />
+        <delete dir="${devStagingDir}"      />
+        <delete dir="${devDistributionDir}" />
+    	<!-- Taking this out for now as we incorporate into MSBuild -->
+    	<!--
+        <delete dir="${stdStagingDir}"      />
+        <delete dir="${stdDistributionDir}" />
+        -->
+
+    </target>
+	
+    <!-- 
+	===========================================================================
+	This section holds all the parameter verification targets. The 'Build'
+	target uses these to verify parameters before proceeding with the build.
+	===========================================================================
+	-->
+	
+    <!-- set an appropriate paramFull based on what is passed in for
+         -DFULL=<true|false> on command line or in Eclipse launch
+         definition -->
+	<target name="setParamFull">
+
+		<!-- if set, pass on to next test without changing, 
+             otherwise flag as error -->
+        <condition property="testParamFull"
+                      value="${FULL}"
+                       else="Error: Parameter FULL is not set." >
+                <isset property="FULL"/>
+        </condition>
+
+        <!--  second, test for allowed full settings -->
+        <condition property="paramFull"
+                      value="${testParamFull}">
+            <or>
+                <equals arg1="${testParamFull}" arg2="false"/>
+                <equals arg1="${testParamFull}" arg2="true"/>
+            </or>
+        </condition>
+        
+        <!-- fail if we didn't set our mandatory signed parameter -->
+        <fail message="Incorrect full parameter passed in. Use -DFULL=true|false on command line in Eclipse launch definition."
+               unless="paramFull" />
+	</target>
+	
+	<!-- set an appropriate paramJDE based on what is passed in for
+         -DJDE=<n.n.n> on command line or in Eclipse launch defintion -->
+    <target name="setParamJDE" >
+
+        <!--  first, test for setting to default if nothing is passed in -->
+        <condition property="testParamJDE"
+                      value="${JDE}"
+                       else="Error: JDE paremter is not set" >
+                <isset property="JDE"/>
+        </condition>
+
+        <!--  second, test for allowed JDE settings -->
+        <condition property="paramJDE"
+                      value="${testParamJDE}">
+            <or>
+                <equals arg1="${testParamJDE}" arg2="4.2.1"/>
+                <equals arg1="${testParamJDE}" arg2="4.3.0"/>
+                <equals arg1="${testParamJDE}" arg2="4.5.0"/>
+                <equals arg1="${testParamJDE}" arg2="4.6.0"/>
+                <equals arg1="${testParamJDE}" arg2="4.6.1"/>
+                <equals arg1="${testParamJDE}" arg2="4.7.0"/>
+                <equals arg1="${testParamJDE}" arg2="5.0.0"/>
+                <equals arg1="${testParamJDE}" arg2="6.0.0"/>
+            </or>
+        </condition>
+        
+        <!-- finally, fail if we didn't set our mandatory jde parameter -->
+        <fail message="Incorrect JDE parameter passed in. Set -DJDE=n.n.n or Eclipse launch definition to a valid JDE version . Current values: 4.2.1, 4.3.0, 4.5.0, 4.6.0, 4.6.1, 4.7.0, 5.0.0, 6.0.0."
+               unless="paramJDE" />
+
+    </target>
+
+    <!-- set an appropriate paramRelease based on what is passed in for
+         -DRELEASE=<true|false> on command line or in Eclipse launch
+         definition -->
+    <target name="setParamRelease">
+
+        <!-- if set, pass on to next test without changing, 
+             otherwise flag as error -->
+        <condition property="testParamRelease"
+                      value="${RELEASE}"
+                       else="Error: Parameter RELEASE is not set." >
+                <isset property="RELEASE"/>
+        </condition>
+
+        <!--  second, test for allowed full settings -->
+        <condition property="paramRelease"
+                      value="${testParamRelease}">
+            <or>
+                <equals arg1="${testParamRelease}" arg2="false"/>
+                <equals arg1="${testParamRelease}" arg2="true"/>
+            </or>
+        </condition>
+        
+        <!-- fail if we didn't set our mandatory signed parameter -->
+        <fail message="Incorrect release parameter passed in. Use -DRELEASE=true|false on command line in Eclipse launch definition."
+               unless="paramRelease" />
+    </target>
+
+	<!-- set an appropriate paramSigned based on what is passed in for
+         -DSIGNED=<true|false> on command line or in Eclipse launch defintion -->
+    <target name="setParamSigned" >
+        
+        <!-- if set, pass on to next test without changing, 
+             otherwise set to default of 'false' -->
+        <condition property="testParamSigned"
+                      value="${SIGNED}"
+                       else="Error: Parameter SIGNED is not set." >
+                <isset property="SIGNED"/>
+        </condition>
+
+        <!--  second, test for allowed signed settings -->
+        <condition property="paramSigned"
+                      value="${testParamSigned}">
+            <or>
+                <equals arg1="${testParamSigned}" arg2="false"/>
+                <equals arg1="${testParamSigned}" arg2="true"/>
+            </or>
+        </condition>
+    	
+        <!-- fail if we didn't set our mandatory signed parameter -->
+        <fail message="Incorrect signed parameter passed in. Use -DSIGNED=true|false on command line or in Eclipse launch definition."
+               unless="paramSigned" />
+        
+        <!-- ok, we have a valid paramSigned, now validate that we have an entry for
+             paramSignedPass if paramSigned is 'true' -->
+        <condition property="testForParamSignedPass">
+            <equals arg1="${paramSigned}" arg2="true"/>
+        </condition>
+        <antcall target="setParamSignedPass"/>
+        
+        <!-- if we get here, we have a valid password to pass in for signing,
+             so go ahead and store it to our defined parameter property -->
+        <property name="paramSignedPass" value="${SIGNED_PASS}"/>
+                
+    </target>
+    
+    <target name="setParamSignedPass" if="testForParamSignedPass">
+
+        <!-- fail if attempting to create signed build without password -->
+        <fail message="Attempting to create a signed build without specifying signing password. Use -DSIGNED_PASS=password on command line."
+                       unless="SIGNED_PASS" />
+    </target>
+
+    <!-- set an appropriate param based on what is passed in for
+         -DSIM=<n.n.n> on command line -->
+    <target name="setParamSim" >
+
+        <!--  first, test for setting to default if nothing is passed in -->
+        <condition property="paramSim"
+                      value="${SIM}"
+                       else="Error: Parameter SIM not set." >
+                <isset property="SIM"/>
+        </condition>
+
+        <!--  second, test for allowed JDE settings -->
+        <condition property="paramSim"
+                      value="${testParamSim}">
+            <or>
+                <equals arg1="${testParamSim}" arg2="4.2.1"/>
+                <equals arg1="${testParamSim}" arg2="4.3.0"/>
+                <equals arg1="${testParamSim}" arg2="4.5.0"/>
+                <equals arg1="${testParamSim}" arg2="4.6.0"/>
+                <equals arg1="${testParamSim}" arg2="4.6.1"/>
+                <equals arg1="${testParamSim}" arg2="4.7.0"/>
+                <equals arg1="${testParamSim}" arg2="5.0.0"/>
+                <equals arg1="${testParamSim}" arg2="6.0.0"/>
+            </or>
+        </condition>
+        
+        <!-- finally, fail if we didn't set our mandatory jde parameter -->
+        <fail message="Incorrect Simulator parameter passed in. Set -DSIM=n.n.n or in Eclipse launch definition to a valid simulator version. Current values: 4.2.1, 4.3.0, 4.5.0, 4.6.0, 4.6.1, 4.7.0, 5.0.0, 6.0.0"
+               unless="paramSim" />
+
+    </target>
+
+    <!-- set an appropriate paramTest based on what is passed in for
+         -DTEST=<true|false> on command line or in Eclipse launch
+         definition -->
+    <target name="setParamTest">
+
+        <!-- if set, pass on to next test without changing, 
+             otherwise flag as error -->
+        <condition property="testParamTest"
+                      value="${TEST}"
+                       else="Error: Parameter TEST is not set." >
+                <isset property="TEST"/>
+        </condition>
+
+        <!--  second, test for allowed full settings -->
+        <condition property="paramTest"
+                      value="${testParamTest}">
+            <or>
+                <equals arg1="${testParamTest}" arg2="false"/>
+                <equals arg1="${testParamTest}" arg2="true"/>
+            </or>
+        </condition>
+        
+        <!-- fail if we didn't set our mandatory signed parameter -->
+        <fail message="Incorrect test parameter passed in. Use -DTEST=true|false on command line in Eclipse launch definition."
+               unless="paramTest" />
+    </target>
+
+    <!-- set an appropriate paramUnzip based on what is passed in for
+         -DUNZIP=<true|false> on command line or in Eclipse launch definition -->
+    <target name="setParamUnzip" >
+        
+        <!-- if set, pass on to next test without changing, 
+             otherwise set to default of 'false' -->
+        <condition property="testParamUnzip"
+                      value="${UNZIP}"
+                       else="Error: Parameter UNZIP not set." >
+                <isset property="UNZIP"/>
+        </condition>
+
+        <!--  second, test for allowed signed settings -->
+        <condition property="paramUnzip"
+                      value="${testParamUnzip}">
+            <or>
+                <equals arg1="${testParamUnzip}" arg2="false"/>
+                <equals arg1="${testParamUnzip}" arg2="true"/>
+            </or>
+        </condition>
+        
+        <!-- fail if we didn't set our mandatory signed parameter -->
+        <fail message="Incorrect unzip parameter passed in. Use -DUNZIP=true|false on command line or in Eclipse launch definition."
+               unless="paramUnzip" />
+                
+    </target>
+
+	<!-- 
+	===========================================================================
+	This section holds all the core non-public targets that produce a binary
+	output.
+	===========================================================================
+	-->
+
+	<!-- produces the Gm application -->
+	<target name="sandbox">
+                    
+        <!-- set this build's specific settings -->
+        <property name="sandboxLib"  value="import=${jdeLib}"/>
+        <property name="sandboxRAPC"     value="sandbox\sandbox.rapc"/>
+        <property name="sandboxOutput"   value="codename=${binDir}\sandbox"/>
+        <fileset    id="sandboxSrc"      dir="sandbox\src"
+                                    includes="**\*.*"/>
+        <fileset    id="sandboxRes"      dir="sandbox\res"
+                                    includes="*.png"/>
+        
+        <!-- perform the build -->
+        <echo message="Building Sandbox application..." />
+        <apply  executable="${jdeRAPC}" parallel="true" failonerror="true">
+            <arg     value="-quiet"/>
+            <arg     value="${sandboxLib}"/>
+            <arg     value="${sandboxOutput}"/>
+            <arg     value="${sandboxRAPC}"/>
+            <fileset refid="sandboxSrc"/>
+            <fileset refid="sandboxRes"/>
+        </apply>
+
+    </target>
+	
+	
+    <!--
+	===========================================================================
+	This section holds all the supporting non-public targets for signing, 
+	unzipping, deploying, distribution, etc.
+	===========================================================================
+	-->
+	
+	<!-- did we request for code signing? -->
+    <target name="signBuild" if="signed" >
+
+        <!-- (we do not sign from behind a proxy, but here is the 
+             implementation just in case things change)
+             conditionally set our _proxyhost property -->
+        <condition property="_proxyhost" 
+                      value="-Dhttp.proxyHost=${proxyhost}"
+                       else="">
+            <isset property="proxyhost"/>
+        </condition>
+        <condition property="_proxyport" 
+                      value="-Dhttp.proxyPort=${proxyport}"
+                       else="">
+            <isset property="proxyport"/>
+        </condition>
+
+        <!-- go for the signing,
+             note requires use of JDE 4.3.0+ for -p parameter
+             for password -->
+        <echo>Signing the build... </echo>
+        <java jar="${jdeSignatureTool}" fork="true" failonerror="true">
+            <arg value="${_proxyhost}"/>
+            <arg value="${_proxyport}"/>
+            <arg value="-a"/>
+            <arg value="-C"/>
+            <arg value="-p"/>
+            <arg value="${paramSignedPass}"/>
+        	<arg value="${binDir}\sandbox.cod"/>
+        </java>
+    
+    </target>
+
+    <!-- did we request for unzipping? -->
+    <target name="unzipBuild" if="unzip" >
+        
+        <!-- Careful here, we need to rename our MobileAgent.cod
+             first, as when we unzip we will have a MobileAgent.cod
+             file in the resulting set. So if we do not
+             rename first, the unzip task gets confused.
+        -->
+        <move file="${binDir}\sandbox.cod" 
+            tofile="${binDir}\sandbox.tmp" />
+        
+        <!-- ok, we are good to go to unzip the Gm.cod into siblings:
+             Gm.cod
+             Gm-1.cod
+             Gm-2.cod
+             .
+             Gm-n.cod
+         -->
+        <unzip src="${binDir}\sandbox.tmp"
+              dest="${binDir}"/>
+              
+    </target>
+    
+    <!-- for the entire set of normal build artifacts, erase old 
+         artifacts and copy new artifacts to target simulator 
+         directory -->
+    <target name="deployBuildToSim">
+    
+        <!-- erase old artifacts on target simulator -->
+        <antcall target="eraseBuildOnSim">
+            <param name="simFiles" value="SmsTest"/>
+        </antcall>
+    	
+    	<!-- copy in new build artifacts to target simulator -->
+    	<antcall target="copyBuildToSim">
+            <param name="simFiles" value="SmsTest"/>
+        </antcall>
+    	
+    	<!-- copy over any 3rd party libs we need -->
+    	<antcall target="copyLibsToSim"/>
+        
+    </target>
+    
+    <!-- remove previously generated simulator files for the build we are doing -->
+    <target name="eraseBuildOnSim">
+        
+        <!-- sim.files property is set by calling task and
+             jdeSimulatorsDir is created from -DSIM=n.n.n.n -->
+        <delete>
+            <fileset dir="${jdeSimulatorsDir}" includes="${simFiles}*.cod"/>
+        </delete>
+        <delete>
+            <fileset dir="${jdeSimulatorsDir}" includes="${simFiles}*.csl"/>
+        </delete>
+        <delete>
+            <fileset dir="${jdeSimulatorsDir}" includes="${simFiles}*.cso"/>
+        </delete>
+        <delete>
+            <fileset dir="${jdeSimulatorsDir}" includes="${simFiles}*.debug"/>
+        </delete>
+        <delete>
+            <fileset dir="${jdeSimulatorsDir}" includes="${simFiles}*.jar"/>
+        </delete>
+        <delete>
+            <fileset dir="${jdeSimulatorsDir}" includes="${simFiles}*.lst"/>
+        </delete>
+        
+    </target>
+    
+    <!-- copy newly generated simulator files for this build to simulator directory -->
+    <target name="copyBuildToSim">
+
+        <!-- sim.files property is set by calling task and
+             jdeSimulatorsDir is created from -DSIM=n.n.n.n -->
+        <copy todir="${jdeSimulatorsDir}" failonerror="false">
+            <fileset dir="${binDir}" includes="${simFiles}*.cod"/>
+        </copy>
+        <copy todir="${jdeSimulatorsDir}" failonerror="false">
+            <fileset dir="${binDir}" includes="${simFiles}*.csl"/>
+        </copy>
+        <copy todir="${jdeSimulatorsDir}" failonerror="false">
+            <fileset dir="${binDir}" includes="${simFiles}*.cso"/>
+        </copy>
+        <copy todir="${jdeSimulatorsDir}" failonerror="false">
+            <fileset dir="${binDir}" includes="${simFiles}*.debug"/>
+        </copy>
+        <copy todir="${jdeSimulatorsDir}" failonerror="false">
+            <fileset dir="${binDir}" includes="${simFiles}*.jar"/>
+        </copy>
+        <copy todir="${jdeSimulatorsDir}" failonerror="false">
+            <fileset dir="${binDir}" includes="${simFiles}*.lst"/>
+        </copy>
+
+    </target>
+    
+    <!-- copy over any 3rd party libraries to simulator directory -->
+    <target name="copyLibsToSim">
+
+    	<!-- noop for now, may need in future -->
+
+    </target>
+
+	<target name="deployBuildToDistribution" if="distribution" >
+
+        <!-- create all staging and distribution locations -->
+    	<mkdir dir="${docsDir}"            />
+    	<mkdir dir="${devStagingDir}"      />
+    	<mkdir dir="${devDistributionDir}" />
+		
+    	<!-- Taking this out for now as we incorporate into MSBuild -->
+    	<!--
+    	<mkdir dir="${stdStagingDir}"      />
+    	<mkdir dir="${stdDistributionDir}" />
+    	-->
+    	
+    	<!-- Create our java docs -->
+        <!-- Taking out for now as it creates a large output
+             to the screen during builds -->
+        <!--
+    	<antcall target="createJavaDocs"/>
+        -->
+    	
+    	<!-- Update our jad files, PinCushion.jad and CompliantIM.jad, 
+    	     to represent the correct number of file size bytes -->
+    	<!-- <antcall target="updateJadFiles"/> -->
+    		
+    	<!-- copy distribution artifacts to staging and distribution locations -->
+    	<!-- TODO: Does not account for sibling cod files -->
+    	<copy file="sandbox/sandbox.alx"                      todir="${devStagingDir}" />
+    	<copy file="${binDir}/sandbox.cod"                    todir="${devStagingDir}" />
+    	<copy file="${binDir}/sandbox.jad"                    todir="${devStagingDir}" />
+        
+    	<copy file="sandbox/sandbox.alx"                      todir="${devDistributionDir}" />
+    	<copy file="${binDir}/sandbox.cod"                    todir="${devDistributionDir}" />
+    	<copy file="${binDir}/sandbox.jad"                    todir="${devDistributionDir}" />
+        
+    	<!-- create an appropriate zip file for BES push deployment -->
+    	<zip basedir="${devDistributionDir}" destfile="${devDistributionDir}\sandbox.zip" 
+    		includes="*.alx,*.cod" />
+    	
+    </target>
+    
+	<target name ="createJavaDocs">
+
+		<!-- setup references to all of the source locations -->
+	    <fileset    id="sandboxSrc" dir="sandbox\src"
+                          includes="**\*.java"/>
+		
+		<!-- go for the javadoc call -->
+                <!-- Taking out for now as it is too verbose until
+                     we clean-up -->
+                <!--
+		<javadoc destdir="${docsDir}" excludepackagenames="net.rim" defaultexcludes="yes">
+            <fileset refid="compliantIMLibrarySrc"/>
+            <fileset refid="productionLibrarySrc"/>
+            <fileset refid="debugLibrarySrc"/>
+		    <fileset refid="mobileAgentSrc"/>
+		</javadoc>
+                -->		        
+    </target>
+    
+    <target name ="updateJadFiles">
+    	
+    	<!-- Important Note: This does not handle yet a sibling cod
+    	                     situation (Gm.cod, Gm-1.cod). -->
+    	
+    	<!-- get the actual cod file size in bytes -->
+    	<length file="${binDir}/sandbox.cod"   property="lengthSandboxCod" />
+
+        <!-- Stage our Gm.jad template files to 
+             receive inputs on file sizes -->
+        <copy      file="sandbox/config/sandbox.jad.template" 
+                 tofile="${binDir}/sandbox.jad"
+              overwrite="true" />
+                                       
+        <!-- first update our version based on what we specified in the alx -->
+    	<replaceregexp    file="${binDir}/sandbox.jad"
+    		      	     match="__version__"
+    		           replace="${VERSION}"
+    		            byline="true" />
+
+        <!-- Now, replace the newly formed Gm.jad file with the correct size in bytes -->
+    	<replaceregexp    file="${binDir}/sandbox.jad"
+    		      	     match="__sandbox__"
+    		           replace="${lengthSandboxCod}"
+    		            byline="true" />
+    </target>
+    		
+	<target name="eraseBuildOnDevice"
+         depends="setParamJDE">
+
+        <!-- Using RIM's JavaLoader utility, erase the current build on a connected device.
+             Important notes:
+             - The list of cod files is hard-coded here, hence if you add in a 
+               new module, you'll need to revisit this target to update it.
+             - The target depends on a passed in PIN parameter.
+        -->
+        <property name="jdeRootDir"    location="${JDEBIN}"/>
+        <property name="jdeJavaLoader" location="${jdeRootDir}${paramJDE}/bin/JavaLoader.exe" />
+
+        <!-- Erase the build using RIM's JavaLoader.exe utility:
+             JavaLoader.exe -u -p<PIN> erase -f <space separated list of cods>
+        -->
+        <exec executable="${jdeJavaLoader}" failonerror="true"> 
+                <arg value="-u"/>               <!-- connect to device on USB -->
+                <arg value="-p0x${PIN}"/>       <!-- using passed in PIN via -D or Eclipse launch definition -->
+                <arg value="erase"/>            <!-- command to javaloader will be 'erase' -->
+                <arg value="-f"/>               <!-- force the erase even if cod is loaded -->
+                <arg value="sandbox.cod"/>      <!-- space separated list of cods to erase -->
+        </exec>
+
+    </target>
+    
+    <target name="deployBuildToDevice"
+         depends="setParamJDE">
+
+        <!-- Using RIM's JavaLoader utility, load the current build on to a connected device.
+             Important notes:
+             - The list of cod files is hard-coded here, hence if you add in a 
+               new module, you'll need to revisit this target to update it.
+             - The target depends on a passed in PIN parameter.
+        -->
+    	
+    	<!-- But first, let's extract out the version number we are building for to 
+    	             be used if calling from a stand alone development run.
+    	             Important notes: 
+    	             1. While not explicitely shown here, after this call
+    	                the version number will be in the property  loader.application.version. 
+    	             2. We assign this loader.application.version to our MasterBuild defined
+    	                proverty VERSION.
+    	             3. Hence, if called from MasterBuild run, we inherit that version. If called
+    	                from in a standalone development run, we get the value
+    	                from MobileAgent.alx. -->
+        <xmlproperty file="sandbox/sandbox.alx" />
+    	<property name="VERSION" value="${loader.application.version}" />
+    	        
+		<property name="devDistributionDir" location="Build/distribution/${loader.application.version}"/>
+        <property name="jdeRootDir"    location="${JDEBIN}"/>
+        <property name="jdeJavaLoader" location="${jdeRootDir}${paramJDE}/bin/JavaLoader.exe" />
+
+        <!-- Deploy the build using RIM's JavaLoader.exe utility:
+             JavaLoader.exe -u -p<PIN> load <space separated list of cods>
+        -->
+        <exec dir="${devDistributionDir}" executable="${jdeJavaLoader}" failonerror="true">
+                <arg value="-u"/>               <!-- connect to device on USB -->
+                <arg value="-p0x${PIN}"/>       <!-- using passed in PIN via -D or Eclipse launch definition -->
+                <arg value="load"/>             <!-- command to javaloader will be 'load' -->
+                <arg value="sandbox.cod"/>      <!-- space separated list of cods to load -->
+        </exec>
+
+    </target>
+
+    <target name="Help" description="Displays the help screen for this build script.">
+    	<echo>
+===============================================================
+
+SUMMARY
+
+This build script is focused on producing various build outputs
+for the sandbox app.
+
+===============================================================
+    	    
+PUBLIC TARGET DEFINITIONS
+
+Public Target    Description
+=============    ===========
+Build            Produces a set of build artifacts based on the
+                 parameters passed into this build script.
+Clean            Cleans all existing build artificats.
+Help (default)   Displays help screen for this build script. 
+    	    
+Public Target Notes:
+A 'Debug' build uses the DebugLibrary as opposed to the 
+'Release' build which uses the ProductionLibrary. The 'Debug'
+build only runs on simulators. The 'Release' build only runs on
+devices and is the build type used for creating a distribution
+for clients. The RELEASE parameter controls this behaviour.
+    		            
+A 'Full' build produces a full set of artifacts and ends with a
+distribution-ready set of artifacts. A 'Dev' build produces
+just a minimum set of artifacts for development purposes. The
+FULL parameter controls this behaviour.
+    		
+Public Target Parameters:
+Parameters may be set on the command line with -Dxxx=yyy; or
+within Eclipse with launch definitions.
+    	    
+External    Corresponding
+Parameter   Internal Parameter   Description
+=========   ===================  ===========
+FULL        paramFull            Designates if the build type
+                                 is 'Full' or 'Dev'.
+                                 Format: true | false
+JDE         paramJDE             Designates the JDE version to
+                                 use for building.
+                                 Format: n.n.n
+PIN         PIN (optional)       Designates the PIN of the
+                                 connected device for erasing,
+                                 deploying and debugging.
+                                 Format: 0123ABCD
+                                         (8 hex digits)
+RELEASE     paramRelease         Designates if the build is for
+                                 'Release' or 'Debug'.
+                                 Format: true | false
+SIM         paramSim             Designates jde simulator set
+                                 to deploy the build to.
+                                 Format: n.n.n
+SIGNED      paramSigned          Designates if you would like
+                                 to sign the build.
+                                 Format: true | false
+SIGNED_PASS paramSignedPass      If signing the build, this
+                                 parameter is mandatory and
+                                 represents the password to
+                                 use.
+                                 Format: string
+TEST        paramTest            Designates if the build will run unit tests after
+                                 building the binaries.
+                                 Format: true | false
+UNZIP       paramUnzip           Designates if the build should
+                                 be unzipped at the finish of
+                                 the build (required for some
+                                 BIS distributions).
+                                 Format: true | false
+    	    
+===============================================================
+    	    
+HOW TO LOCALLY OVERRIDE THE BUILD SCRIPT
+An individual can tailor the build to their local system as
+they see fit using a defined local override capability. An
+optional local override file, named local.xml, can be created
+in the  folder 'local' off of the root of this workspace.
+    		
+Example:
+C:\dev1\Build\build.xml
+(this standard build script)
+
+C:\dev1\local\local.xml 
+(the location and name of file for local overrride.)
+    		
+Optionally, create this file if you want to override anything
+from a property to a complete replacement of this standard
+build script. 
+    		
+This standard build script will expect the structure below for
+local.xml. Note, that the beginning angle brackets were removed
+to get this to print out:
+
+project name="GmOverride" 
+     default="localOverrideTarget"
+     basedir="." >
+    	       
+    !--
+    Optional:
+    Set global properties here to override properties in the
+    standard build script. 
+    	        
+    Example override of a property:
+    -->
+    property name="rim.dir"
+         location="/Betas/Research in Motion"/>
+    	       
+    !--
+    Mandatory:
+    Place an override target here called localOverrideTarget.
+    The contents of the target can be anything from nothing at
+    all to a full replacement of the standard build script.
+    	        
+    Example of localOverrideTarget:
+    -->
+    target name="localOverrideTarget">
+        exec executable="cmd">
+    	      arg value="/c"/>
+    	      arg value="myBuildScriptOverride.bat"/>
+	    /exec>
+        fail message="Using myBuildScriptOverride.bat."/>
+    /target>
+    	    
+/project> 
+
+===============================================================
+
+    	</echo>
+
+    </target>
+
+</project>
+
