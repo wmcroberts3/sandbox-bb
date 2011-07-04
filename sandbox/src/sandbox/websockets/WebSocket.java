@@ -5,7 +5,6 @@ public interface WebSocket
 {
 	public void setEventHandler(WebSocketEventHandler eventHandler);
 	
-	
 	public WebSocketEventHandler getEventHandler();
 	
 
@@ -16,7 +15,7 @@ public interface WebSocket
 	public void send(String data)
 			throws WebSocketException;
 	
-
+//
 //	public void send(byte[] data)
 //			throws WebSocketException;
 	
