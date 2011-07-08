@@ -15,7 +15,7 @@ public interface WebSocket
 	public void send(String data)
 			throws WebSocketException;
 	
-//
+
 //
 //	public void send(byte[] data)
 //			throws WebSocketException
